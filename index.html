@@ -1,0 +1,1728 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>月影神庙 · 异步寻宝记</title>
+<meta name="description" content="用 async / await 驱动的异步寻宝动画：八幕冒险、并行试炼、竞速与重试。">
+<style>
+  :root {
+    --bg: #050a10;
+    --panel: rgba(10, 21, 30, 0.86);
+    --line: rgba(244, 201, 107, 0.16);
+    --gold: #f4c96b;
+    --gold-2: #ffb45c;
+    --parchment: #ecdcb8;
+    --cyan: #63e6d4;
+    --green: #7ee787;
+    --red: #ff6f6f;
+    --muted: #8ea3b4;
+    --text: #dfeaf2;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  [hidden] { display: none !important; }
+
+  body {
+    font-family: "PingFang SC", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
+    color: var(--text);
+    background:
+      radial-gradient(1100px 700px at 72% -12%, rgba(43, 105, 120, 0.28), transparent 62%),
+      radial-gradient(900px 620px at 8% 108%, rgba(133, 82, 22, 0.2), transparent 60%),
+      linear-gradient(180deg, #060c13, #04080c 70%);
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .app {
+    height: 100vh;
+    height: 100dvh;
+    max-width: 1500px;
+    margin: 0 auto;
+    padding: 18px 22px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  /* ---------- header ---------- */
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 18px;
+  }
+  .brand .eyebrow {
+    margin: 0 0 7px;
+    font-size: 9.5px;
+    letter-spacing: 0.32em;
+    color: var(--muted);
+    text-transform: uppercase;
+  }
+  h1 {
+    margin: 0;
+    font-family: "Noto Serif SC", "Songti SC", "STSong", "SimSun", serif;
+    font-size: clamp(22px, 2.2vw, 33px);
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    background: linear-gradient(100deg, #fff1c9, #f4c96b 45%, #d99a3f);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  h1 span { opacity: 0.5; margin: 0 0.35em; }
+  .subtitle {
+    margin: 6px 0 0;
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+  }
+  .hud {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .pill {
+    display: flex;
+    align-items: baseline;
+    gap: 7px;
+    padding: 7px 12px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: rgba(10, 20, 28, 0.55);
+    backdrop-filter: blur(8px);
+  }
+  .pill span {
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    color: var(--muted);
+  }
+  .pill strong {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--parchment);
+    font-variant-numeric: tabular-nums;
+  }
+  .pill.mono {
+    font-family: ui-monospace, Consolas, monospace;
+    font-size: 10.5px;
+    letter-spacing: 0.04em;
+    color: var(--gold);
+  }
+  #status[data-tone="live"] { color: var(--cyan); }
+  #status[data-tone="done"] { color: var(--green); }
+  #status[data-tone="fail"] { color: var(--red); }
+
+  /* ---------- layout ---------- */
+  main {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1.65fr) minmax(330px, 0.8fr);
+    gap: 16px;
+  }
+
+  /* ---------- stage ---------- */
+  .stage {
+    position: relative;
+    min-height: 0;
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: 22px;
+    background:
+      radial-gradient(ellipse at 60% 40%, #0b1c26 0%, #07111a 55%, #050b11 100%);
+    box-shadow: inset 0 0 90px rgba(0, 0, 0, 0.6), 0 24px 60px rgba(0, 0, 0, 0.35);
+  }
+  .stage::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    border-radius: 22px;
+    pointer-events: none;
+    box-shadow: inset 0 0 120px 30px rgba(0, 0, 0, 0.55);
+  }
+  .stage::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 6;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .stage.flash-danger::before {
+    background: radial-gradient(circle at 50% 50%, rgba(255, 90, 80, 0.28), transparent 70%);
+    animation: flashOut 0.7s ease-out forwards;
+  }
+  .stage.flash-gold::before {
+    background: radial-gradient(circle at 50% 50%, rgba(255, 214, 130, 0.3), transparent 70%);
+    animation: flashOut 0.7s ease-out forwards;
+  }
+  .stage.shake { animation: shake 0.5s; }
+
+  #map {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    width: 100%;
+    height: 100%;
+  }
+  #dust {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    pointer-events: none;
+  }
+
+  /* ---------- map ---------- */
+  #map .trail-base {
+    fill: none;
+    stroke: rgba(244, 201, 107, 0.14);
+    stroke-width: 2;
+    stroke-dasharray: 4 9;
+    stroke-linecap: round;
+  }
+  #map .trail-progress {
+    fill: none;
+    stroke: url(#goldGrad);
+    stroke-width: 3;
+    stroke-linecap: round;
+    filter: drop-shadow(0 0 6px rgba(244, 201, 107, 0.55));
+  }
+  #map .landmark {
+    opacity: 0.32;
+    transition: opacity 0.7s ease, filter 0.7s ease;
+  }
+  #map .landmark.lit {
+    opacity: 1;
+    filter: drop-shadow(0 0 8px rgba(244, 201, 107, 0.5));
+  }
+  #map .landmark .icon {
+    fill: none;
+    stroke: var(--gold);
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  #map .landmark text {
+    fill: var(--parchment);
+    font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 10.5px;
+    letter-spacing: 0.12em;
+    opacity: 0.72;
+  }
+  #map .rune {
+    fill: rgba(244, 201, 107, 0.08);
+    stroke: var(--gold);
+    stroke-width: 1.2;
+    transition: fill 0.4s ease, filter 0.4s ease;
+  }
+  #map .rune.lit {
+    fill: #ffe6a1;
+    filter: drop-shadow(0 0 7px rgba(255, 208, 106, 0.95));
+  }
+  #map .traveler { filter: drop-shadow(0 0 10px rgba(255, 205, 110, 0.9)); }
+  #map .traveler .core { fill: #ffe9a8; }
+  #map .traveler .ring {
+    fill: none;
+    stroke: rgba(255, 220, 140, 0.75);
+    stroke-width: 1.1;
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: ringPulse 1.9s ease-out infinite;
+  }
+  #map .traveler .ring:nth-child(2) { animation-delay: 0.95s; }
+  #map .flame {
+    transform-box: fill-box;
+    transform-origin: center bottom;
+    animation: flicker 1.5s ease-in-out infinite alternate;
+    filter: drop-shadow(0 0 7px rgba(255, 160, 60, 0.8));
+  }
+
+  /* ---------- stage chrome ---------- */
+  .scene-caption {
+    position: absolute;
+    left: 18px;
+    bottom: 16px;
+    z-index: 4;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    pointer-events: none;
+    text-shadow: 0 2px 14px #000;
+  }
+  .scene-caption .cap-label {
+    font-size: 9px;
+    letter-spacing: 0.3em;
+    color: rgba(244, 201, 107, 0.55);
+    text-transform: uppercase;
+  }
+  .scene-caption strong {
+    font-family: "Noto Serif SC", "Songti SC", serif;
+    font-size: 14px;
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    color: var(--parchment);
+  }
+  .compass {
+    position: absolute;
+    right: 16px;
+    bottom: 14px;
+    z-index: 4;
+    width: 52px;
+    height: 52px;
+    opacity: 0.45;
+    pointer-events: none;
+  }
+  .compass .needle {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: needle 9s ease-in-out infinite;
+  }
+
+  /* ---------- panel ---------- */
+  .panel {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-height: 0;
+    padding: 16px;
+    border: 1px solid var(--line);
+    border-radius: 22px;
+    background: linear-gradient(180deg, rgba(11, 24, 33, 0.9), rgba(7, 15, 22, 0.86));
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.3);
+    backdrop-filter: blur(10px);
+  }
+  .progress {
+    height: 3px;
+    border-radius: 99px;
+    background: rgba(255, 255, 255, 0.07);
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+  .progress i {
+    display: block;
+    width: 0;
+    height: 100%;
+    border-radius: 99px;
+    background: linear-gradient(90deg, var(--cyan), var(--gold));
+    box-shadow: 0 0 10px rgba(244, 201, 107, 0.7);
+    transition: width 0.4s ease;
+  }
+  .panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 2px;
+    font-size: 10px;
+    letter-spacing: 0.22em;
+    color: var(--muted);
+    text-transform: uppercase;
+  }
+  .steps-head { margin-top: 2px; }
+  #step-count { color: var(--gold); font-variant-numeric: tabular-nums; }
+
+  .log {
+    flex: 1;
+    min-height: 80px;
+    overflow-y: auto;
+    padding: 2px 4px 4px 2px;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(244, 201, 107, 0.25) transparent;
+  }
+  .log::-webkit-scrollbar { width: 5px; }
+  .log::-webkit-scrollbar-thumb {
+    background: rgba(244, 201, 107, 0.22);
+    border-radius: 99px;
+  }
+  .log-line {
+    display: flex;
+    gap: 8px;
+    margin: 0 0 7px;
+    opacity: 0;
+    transform: translateY(6px);
+    animation: lineIn 0.45s ease forwards;
+  }
+  .log-line .t {
+    flex-shrink: 0;
+    padding-top: 2px;
+    font-family: ui-monospace, Consolas, monospace;
+    font-size: 10.5px;
+    color: #5b7080;
+    font-variant-numeric: tabular-nums;
+  }
+  .log-line .msg { color: #b9c8d4; line-height: 1.62; font-size: 12.5px; }
+  .log-line.story .msg { color: #d8d0ba; }
+  .log-line.special .msg { color: var(--gold); }
+  .log-line.success .msg { color: var(--green); }
+  .log-line.warn .msg { color: #ffc266; }
+  .log-line.danger .msg { color: var(--red); }
+
+  .steps {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 54%;
+    overflow-y: auto;
+    padding-right: 4px;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(244, 201, 107, 0.2) transparent;
+  }
+  .steps::-webkit-scrollbar { width: 4px; }
+  .steps::-webkit-scrollbar-thumb {
+    background: rgba(244, 201, 107, 0.18);
+    border-radius: 99px;
+  }
+  .step {
+    padding: 7px 9px;
+    border: 1px solid transparent;
+    border-radius: 11px;
+    font-size: 12.5px;
+    color: #7f93a3;
+    transition: background 0.35s, border-color 0.35s, color 0.35s;
+  }
+  .step .row { display: flex; align-items: center; gap: 9px; }
+  .step .dot {
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+    width: 21px;
+    height: 21px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 50%;
+    font-size: 10px;
+    color: #6d8190;
+    font-variant-numeric: tabular-nums;
+    transition: 0.3s;
+  }
+  .step .name { flex: 1; letter-spacing: 0.04em; }
+  .step .sub { font-size: 10px; letter-spacing: 0.06em; color: #5f7381; }
+  .step.active {
+    color: var(--parchment);
+    border-color: rgba(244, 201, 107, 0.24);
+    background: linear-gradient(90deg, rgba(244, 201, 107, 0.1), rgba(244, 201, 107, 0));
+  }
+  .step.active .dot {
+    color: var(--gold);
+    border-color: var(--gold);
+    box-shadow: 0 0 0 3px rgba(244, 201, 107, 0.08), 0 0 14px rgba(244, 201, 107, 0.35);
+  }
+  .step.done { color: #9fbfae; }
+  .step.done .dot {
+    color: var(--green);
+    border-color: rgba(126, 231, 135, 0.4);
+    background: rgba(126, 231, 135, 0.1);
+  }
+  .step.done .sub { color: rgba(126, 231, 135, 0.6); }
+  .step.fail .dot {
+    color: var(--red);
+    border-color: rgba(255, 111, 111, 0.5);
+    background: rgba(255, 111, 111, 0.1);
+  }
+  .substeps { display: flex; flex-wrap: wrap; gap: 5px; padding: 6px 0 1px 30px; }
+  .substep {
+    padding: 2px 8px;
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 99px;
+    font-size: 10px;
+    color: #6d8190;
+    transition: 0.3s;
+  }
+  .substep.active {
+    color: var(--gold);
+    border-color: rgba(244, 201, 107, 0.4);
+    background: rgba(244, 201, 107, 0.08);
+  }
+  .substep.done {
+    color: var(--green);
+    border-color: rgba(126, 231, 135, 0.35);
+    background: rgba(126, 231, 135, 0.07);
+  }
+
+  /* ---------- footer ---------- */
+  footer {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  button {
+    border: 0;
+    border-radius: 11px;
+    padding: 11px 20px;
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    transition: transform 0.22s, box-shadow 0.22s, background 0.22s, opacity 0.22s;
+  }
+  button:disabled { cursor: not-allowed; opacity: 0.55; }
+  button:not(:disabled):hover { transform: translateY(-1px); }
+  .primary {
+    color: #1c1305;
+    font-weight: 700;
+    background: linear-gradient(135deg, #f6d38b, #e8a84a);
+    box-shadow: 0 8px 24px rgba(232, 168, 74, 0.28);
+  }
+  .primary:not(:disabled):hover { box-shadow: 0 10px 30px rgba(232, 168, 74, 0.42); }
+  .ghost {
+    color: var(--parchment);
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(244, 201, 107, 0.22);
+  }
+  .ghost:not(:disabled):hover { background: rgba(244, 201, 107, 0.08); }
+  .hint {
+    margin-left: auto;
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    color: #6d8190;
+  }
+
+  /* ---------- choice ---------- */
+  .choice {
+    position: absolute;
+    inset: 0;
+    z-index: 7;
+    display: grid;
+    place-items: center;
+    padding: 18px;
+    background: rgba(4, 9, 14, 0.58);
+    backdrop-filter: blur(4px);
+    animation: fadeIn 0.4s both;
+  }
+  .choice-card {
+    width: min(94%, 560px);
+    padding: 22px;
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    background: rgba(10, 22, 31, 0.96);
+    box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6);
+    animation: riseIn 0.45s both;
+  }
+  .kicker {
+    margin: 0 0 6px;
+    font-size: 9.5px;
+    letter-spacing: 0.3em;
+    color: rgba(244, 201, 107, 0.65);
+    text-transform: uppercase;
+  }
+  .choice-card h3 {
+    margin: 0 0 6px;
+    font-family: "Noto Serif SC", "Songti SC", serif;
+    font-size: 21px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    color: var(--parchment);
+  }
+  .choice-desc { margin: 0; font-size: 12.5px; line-height: 1.6; color: var(--muted); }
+  .choice-options {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-top: 16px;
+  }
+  .choice-options button {
+    padding: 14px;
+    text-align: left;
+    color: var(--parchment);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.035);
+  }
+  .choice-options button:hover {
+    border-color: var(--gold);
+    background: rgba(244, 201, 107, 0.08);
+  }
+  .choice-options b { display: block; font-size: 13px; font-weight: 600; letter-spacing: 0.03em; }
+  .choice-options small { display: block; margin-top: 5px; font-size: 11px; color: var(--muted); }
+  .choice-timer {
+    height: 3px;
+    margin-top: 16px;
+    border-radius: 99px;
+    background: rgba(255, 255, 255, 0.08);
+    overflow: hidden;
+  }
+  .choice-timer i {
+    display: block;
+    height: 100%;
+    width: 100%;
+    border-radius: 99px;
+    background: linear-gradient(90deg, var(--cyan), var(--gold));
+    transform-origin: left;
+  }
+  .choice-note { margin: 8px 0 0; font-size: 10.5px; color: #5f7381; text-align: right; }
+
+  /* ---------- reveal ---------- */
+  .reveal {
+    position: absolute;
+    inset: 0;
+    z-index: 8;
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+    padding: 18px;
+    background: radial-gradient(circle at 50% 42%, rgba(244, 201, 107, 0.16), rgba(3, 8, 12, 0.9) 48%, rgba(3, 7, 11, 0.97));
+    backdrop-filter: blur(3px);
+    -webkit-backdrop-filter: blur(3px);
+    animation: fadeIn 0.9s both;
+  }
+  .rays {
+    position: absolute;
+    left: 50%;
+    top: 40%;
+    width: 150vmax;
+    height: 150vmax;
+    transform: translate(-50%, -50%);
+    background: repeating-conic-gradient(from 0deg, rgba(244, 201, 107, 0.055) 0deg 2deg, transparent 2deg 11deg);
+    animation: spin 60s linear infinite;
+    pointer-events: none;
+  }
+  .reveal-inner {
+    position: relative;
+    z-index: 2;
+    width: 100%;
+    max-width: 560px;
+    text-align: center;
+    animation: riseIn 0.8s 0.15s both;
+  }
+  .chest-wrap {
+    position: relative;
+    width: 168px;
+    margin: 0 auto 2px;
+    cursor: pointer;
+  }
+  .big-chest {
+    display: block;
+    width: 100%;
+    filter: drop-shadow(0 0 26px rgba(244, 201, 107, 0.35));
+    animation: float 4s ease-in-out infinite;
+  }
+  .reveal .lid {
+    transform-box: fill-box;
+    transform-origin: center bottom;
+    transition: transform 0.9s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  .reveal.open .lid { transform: rotate(-46deg) translate(-2px, -3px); }
+  .sparks {
+    position: absolute;
+    left: 50%;
+    top: 48%;
+    width: 0;
+    height: 0;
+    pointer-events: none;
+  }
+  .sparks i {
+    position: absolute;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: radial-gradient(circle, #fff6cf, #ffc44d 60%, transparent 70%);
+    animation: sparkFly 1.8s cubic-bezier(0.1, 0.7, 0.2, 1) forwards;
+  }
+  .reveal h2 {
+    margin: 6px 0 10px;
+    font-family: "Noto Serif SC", "Songti SC", serif;
+    font-size: clamp(25px, 3vw, 34px);
+    letter-spacing: 0.08em;
+    background: linear-gradient(100deg, #fff3cc, #f4c96b 55%, #e3a84b);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .reveal-text {
+    margin: 0 auto;
+    max-width: 400px;
+    font-size: 13px;
+    line-height: 1.8;
+    color: #b9c8d4;
+  }
+  .reveal-quote {
+    margin: 14px auto 0;
+    max-width: 420px;
+    font-family: "Noto Serif SC", "Songti SC", serif;
+    font-size: 14px;
+    line-height: 1.7;
+    color: var(--parchment);
+  }
+  .reveal-meta {
+    margin-top: 14px;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+  }
+  .reveal-meta b { color: var(--gold); font-variant-numeric: tabular-nums; }
+  .reveal-actions {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin-top: 18px;
+  }
+
+  /* ---------- animations ---------- */
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes riseIn {
+    from { opacity: 0; transform: translateY(14px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes lineIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes ringPulse {
+    0% { transform: scale(0.45); opacity: 0.9; }
+    100% { transform: scale(2); opacity: 0; }
+  }
+  @keyframes needle {
+    0%, 100% { transform: rotate(-8deg); }
+    50% { transform: rotate(10deg); }
+  }
+  @keyframes flicker {
+    0% { transform: scale(1, 1) skewX(0deg); }
+    50% { transform: scale(0.9, 1.12) skewX(2deg); }
+    100% { transform: scale(1.05, 0.95) skewX(-2deg); }
+  }
+  @keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-7px); }
+  }
+  @keyframes spin { to { transform: translate(-50%, -50%) rotate(360deg); } }
+  @keyframes sparkFly {
+    0% { transform: translate(0, 0) scale(1); opacity: 1; }
+    100% { transform: translate(var(--tx), var(--ty)) scale(0.2); opacity: 0; }
+  }
+  @keyframes flashOut {
+    0% { opacity: 0; }
+    20% { opacity: 1; }
+    100% { opacity: 0; }
+  }
+  @keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    15% { transform: translateX(-8px) rotate(-0.3deg); }
+    30% { transform: translateX(7px) rotate(0.3deg); }
+    45% { transform: translateX(-5px); }
+    60% { transform: translateX(4px); }
+    75% { transform: translateX(-2px); }
+  }
+  @keyframes choiceDrain {
+    from { transform: scaleX(1); }
+    to { transform: scaleX(0); }
+  }
+
+  /* ---------- responsive ---------- */
+  @media (max-width: 980px) {
+    body { overflow: auto; }
+    .app { height: auto; min-height: 100dvh; padding: 14px; }
+    header { flex-direction: column; align-items: flex-start; gap: 10px; }
+    .hud { justify-content: flex-start; }
+    main { grid-template-columns: 1fr; gap: 12px; }
+    .stage { height: 46vh; min-height: 320px; }
+    .panel { min-height: 430px; }
+    .hint { display: none; }
+    .steps { max-height: none; }
+    #map .landmark text { font-size: 18px; letter-spacing: 0.06em; }
+    #map .landmark .icon { stroke-width: 2; }
+    .scene-caption { left: 14px; bottom: 12px; }
+    .scene-caption strong { font-size: 13px; }
+    .reveal {
+      position: fixed;
+      overflow-y: auto;
+      padding: 30px 18px;
+      border-radius: 0;
+      background: radial-gradient(circle at 50% 38%, rgba(26, 24, 15, 0.985), rgba(4, 9, 14, 0.995) 45%, #02060a);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+    }
+    .reveal-inner { margin: auto; }
+  }
+  @media (max-height: 760px) and (min-width: 981px) {
+    .scene-caption { bottom: 10px; }
+    .steps { max-height: 40%; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="brand">
+      <p class="eyebrow">A Story Told in Async / Await</p>
+      <h1>月影神庙<span>·</span>异步寻宝记</h1>
+      <p class="subtitle">八幕冒险，全部由 Promise 驱动</p>
+    </div>
+    <div class="hud">
+      <div class="pill"><span>用时</span><strong id="timer">0.0s</strong></div>
+      <div class="pill"><span>状态</span><strong id="status" data-tone="idle">待启程</strong></div>
+      <div class="pill mono">async / await</div>
+    </div>
+  </header>
+
+  <main>
+    <section class="stage" id="stage" aria-label="寻宝地图动画">
+      <svg id="map" viewBox="0 0 820 620" preserveAspectRatio="xMidYMid meet">
+        <defs>
+          <radialGradient id="moonGlow">
+            <stop offset="0%" stop-color="#fff4cf" stop-opacity="0.95" />
+            <stop offset="55%" stop-color="#f5d98f" stop-opacity="0.5" />
+            <stop offset="100%" stop-color="#f5d98f" stop-opacity="0" />
+          </radialGradient>
+          <linearGradient id="goldGrad" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="#63e6d4" />
+            <stop offset="55%" stop-color="#f4c96b" />
+            <stop offset="100%" stop-color="#ffb45c" />
+          </linearGradient>
+          <linearGradient id="flameGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#fff4c2" />
+            <stop offset="45%" stop-color="#ffb347" />
+            <stop offset="100%" stop-color="#ff6b1a" stop-opacity="0.1" />
+          </linearGradient>
+        </defs>
+
+        <g id="stars"></g>
+
+        <g opacity="0.5">
+          <circle cx="132" cy="118" r="88" fill="url(#moonGlow)" />
+          <circle cx="132" cy="118" r="43" fill="#f6e2ac" opacity="0.88" />
+          <circle cx="115" cy="104" r="7" fill="#e8d29a" opacity="0.5" />
+          <circle cx="146" cy="131" r="5" fill="#e8d29a" opacity="0.42" />
+          <circle cx="151" cy="103" r="3.4" fill="#e8d29a" opacity="0.38" />
+        </g>
+
+        <path id="trail" class="trail-base"
+          d="M 55 530
+             C 140 522, 165 470, 240 448
+             C 310 428, 300 330, 365 310
+             C 425 292, 462 372, 528 356
+             C 592 340, 578 252, 638 236
+             C 695 221, 708 160, 755 124" />
+        <path id="trail-progress" class="trail-progress"
+          d="M 55 530
+             C 140 522, 165 470, 240 448
+             C 310 428, 300 330, 365 310
+             C 425 292, 462 372, 528 356
+             C 592 340, 578 252, 638 236
+             C 695 221, 708 160, 755 124" />
+
+        <g id="landmarks"></g>
+        <g id="torches"></g>
+
+        <g id="traveler" class="traveler">
+          <circle class="ring" r="11" />
+          <circle class="ring" r="11" />
+          <circle class="core" r="4.5" />
+        </g>
+      </svg>
+
+      <canvas id="dust"></canvas>
+
+      <div class="scene-caption">
+        <span class="cap-label">当前位置</span>
+        <strong id="location">—</strong>
+      </div>
+
+      <svg class="compass" viewBox="0 0 60 60" aria-hidden="true">
+        <circle cx="30" cy="30" r="21" fill="none" stroke="rgba(244,201,107,.45)" stroke-width="1" />
+        <circle cx="30" cy="30" r="15" fill="none" stroke="rgba(244,201,107,.18)" stroke-width="1" stroke-dasharray="2 4" />
+        <g class="needle">
+          <path d="M30 12 L34 30 L30 27 L26 30 Z" fill="#f4c96b" />
+          <path d="M30 48 L26 30 L30 33 L34 30 Z" fill="rgba(244,201,107,.3)" />
+        </g>
+        <text x="30" y="8" text-anchor="middle" fill="rgba(244,201,107,.6)" font-size="6">N</text>
+      </svg>
+
+      <div class="choice" id="choice" hidden>
+        <div class="choice-card">
+          <p class="kicker">第四幕 · 神庙之门</p>
+          <h3>两条路，都能到达真相</h3>
+          <p class="choice-desc">正门稳妥但更慢；暗道更快，却可能惊动守卫。这一次，由你来选。</p>
+          <div class="choice-options">
+            <button type="button" data-choice="front">
+              <b>拨动日晷 · 正门</b>
+              <small>稳妥 · 耗时更长</small>
+            </button>
+            <button type="button" data-choice="tunnel">
+              <b>潜入地下水道</b>
+              <small>捷径 · 可能触发重试</small>
+            </button>
+          </div>
+          <div class="choice-timer"><i id="choiceBar"></i></div>
+          <p class="choice-note">8 秒后自动选择正门</p>
+        </div>
+      </div>
+
+      <div class="reveal" id="reveal" hidden>
+        <div class="rays"></div>
+        <div class="reveal-inner">
+          <div class="chest-wrap" id="chestWrap" title="点一下试试">
+            <svg class="big-chest" viewBox="-60 -60 120 120" aria-hidden="true">
+              <defs>
+                <linearGradient id="chestGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stop-color="#8a5a22" />
+                  <stop offset="100%" stop-color="#4a2d0d" />
+                </linearGradient>
+                <linearGradient id="lidGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stop-color="#a9752f" />
+                  <stop offset="100%" stop-color="#6b4213" />
+                </linearGradient>
+              </defs>
+              <ellipse cx="0" cy="42" rx="38" ry="7" fill="rgba(0,0,0,.4)" />
+              <g class="lid">
+                <path d="M-30,4 A30,22 0 0 1 30,4 L30,10 L-30,10 Z"
+                  fill="url(#lidGrad)" stroke="#f4c96b" stroke-width="1.4" />
+                <path d="M-30,4 A30,22 0 0 1 30,4" fill="none"
+                  stroke="#ffd98a" stroke-width="1" opacity=".7" />
+              </g>
+              <rect x="-30" y="10" width="60" height="30" rx="4"
+                fill="url(#chestGrad)" stroke="#f4c96b" stroke-width="1.4" />
+              <rect x="-30" y="10" width="60" height="6" fill="#000" opacity=".18" />
+              <rect x="-5" y="16" width="10" height="14" rx="2" fill="#f4c96b" />
+              <circle cx="0" cy="22" r="2.4" fill="#6b4213" />
+            </svg>
+            <div class="sparks" id="sparks"></div>
+          </div>
+          <p class="kicker">箱盖打开的瞬间</p>
+          <h2>宝藏不是黄金</h2>
+          <p class="reveal-text">是一枚星辉罗盘，和半张通往「天空之城」的地图。</p>
+          <p class="reveal-quote">「真正的宝藏，是愿意继续出发的人。」</p>
+          <div class="reveal-meta">用时 <b id="finalTime">--</b> · 完成 <b>8 / 8</b> 幕</div>
+          <div class="reveal-actions">
+            <button class="primary" id="againBtn" type="button">再走一次</button>
+            <button class="ghost" id="closeReveal" type="button">留在此页</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <aside class="panel">
+      <div class="progress"><i id="progress-bar"></i></div>
+      <div class="panel-head"><span>探险日志</span><span>expedition log</span></div>
+      <div class="log" id="log" aria-live="polite"></div>
+      <div class="panel-head steps-head"><span>旅程进度</span><span id="step-count">0 / 8</span></div>
+      <div class="steps" id="steps"></div>
+    </aside>
+  </main>
+
+  <footer>
+    <button class="primary" id="startBtn" type="button">开始探险</button>
+    <button class="ghost" id="restartBtn" type="button">重新开始</button>
+    <button class="ghost" id="speedBtn" type="button">速度 ×1</button>
+    <span class="hint">第 4 幕可以替探险者选路 · 点击宝箱有惊喜</span>
+  </footer>
+</div>
+
+<script>
+(() => {
+  'use strict';
+
+  const $ = (sel, root = document) => root.querySelector(sel);
+  const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+
+  class AbortRun extends Error {
+    constructor() { super('run aborted'); this.name = 'AbortRun'; }
+  }
+  class StoryError extends Error {
+    constructor(message) { super(message); this.name = 'StoryError'; }
+  }
+
+  const state = {
+    run: 0,
+    running: false,
+    speed: 1,
+    startTime: 0,
+    progress: 0,
+    timer: null,
+    pendingChoice: null,
+    reduced: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+  };
+
+  /* ---------------- DOM ---------------- */
+  const stage = $('#stage');
+  const trail = $('#trail');
+  const trailProgress = $('#trail-progress');
+  const traveler = $('#traveler');
+  const landmarksLayer = $('#landmarks');
+  const torchesLayer = $('#torches');
+  const starsLayer = $('#stars');
+  const logEl = $('#log');
+  const stepsEl = $('#steps');
+  const progressBar = $('#progress-bar');
+  const timerEl = $('#timer');
+  const statusEl = $('#status');
+  const locationEl = $('#location');
+  const stepCountEl = $('#step-count');
+  const choiceEl = $('#choice');
+  const choiceBar = $('#choiceBar');
+  const revealEl = $('#reveal');
+  const sparksEl = $('#sparks');
+  const finalTimeEl = $('#finalTime');
+  const startBtn = $('#startBtn');
+  const restartBtn = $('#restartBtn');
+  const speedBtn = $('#speedBtn');
+
+  const trailLen = trail.getTotalLength();
+  trailProgress.style.strokeDasharray = String(trailLen);
+  trailProgress.style.strokeDashoffset = String(trailLen);
+
+  /* ---------------- 数据 ---------------- */
+  const STEPS = [
+    { id: 'letter', name: '雨夜来信' },
+    { id: 'library', name: '古籍解码' },
+    { id: 'lake', name: '月影湖' },
+    { id: 'gate', name: '神庙之门' },
+    {
+      id: 'trials', name: '三重试炼',
+      substeps: [
+        { id: 'brazier', name: '青铜火盆' },
+        { id: 'chart', name: '星象盘' },
+        { id: 'guard', name: '守卫长廊' },
+      ],
+    },
+    { id: 'sand', name: '流沙之门' },
+    { id: 'runes', name: '符文之锁' },
+    { id: 'chest', name: '宝藏揭晓' },
+  ];
+
+  const LANDMARKS = [
+    { id: 'letter', frac: 0.02, label: '雨夜来信', icon: 'letter' },
+    { id: 'library', frac: 0.17, label: '古图书馆', icon: 'library' },
+    { id: 'lake', frac: 0.37, label: '月影湖', icon: 'boat' },
+    { id: 'gate', frac: 0.55, label: '神庙之门', icon: 'gate' },
+    { id: 'trials', frac: 0.72, label: '三重试炼', icon: 'trial' },
+    { id: 'sand', frac: 0.86, label: '流沙之门', icon: 'hourglass' },
+    { id: 'runes', frac: 0.94, label: '符文之锁', icon: 'rune' },
+    { id: 'chest', frac: 1, label: '月光宝箱', icon: 'chest' },
+  ];
+
+  const ICONS = {
+    letter: '<rect x="-11" y="-8" width="22" height="16" rx="2"/><path d="M-11,-8 L0,2 L11,-8"/>',
+    library: '<path d="M-13,-2 L0,-11 L13,-2"/><path d="M-11,-2 V10 M-4,-2 V10 M4,-2 V10 M11,-2 V10"/><path d="M-15,12 H15"/>',
+    boat: '<path d="M-12,4 L12,4 L7,11 L-7,11 Z"/><path d="M0,4 V-9 L9,-2"/><path d="M-15,15 Q-10,12 -5,15 T5,15 T15,15"/>',
+    gate: '<path d="M-12,12 V-4 A12,12 0 0 1 12,-4 V12"/><path d="M-6,12 V-1 A6,6 0 0 1 6,-1 V12"/>',
+    trial: '<path d="M-12,8 C-15,1 -10,-3 -9,-9 C-5,-3 -4,1 -4,5 Z"/><path d="M0,8 C-3,1 2,-3 3,-9 C7,-3 8,1 8,5 Z"/><path d="M12,8 C9,1 14,-3 15,-9 C19,-3 20,1 20,5 Z"/>',
+    hourglass: '<path d="M-8,-10 H8 L0,0 L8,10 H-8 L0,0 Z"/><path d="M-8,-10 H8 M-8,10 H8"/>',
+    rune: '<path class="rune" id="rune-moon" d="M-14,0 L-10,-4 L-6,0 L-10,4 Z"/><path class="rune" id="rune-star" d="M0,-5 L4,-1 L0,3 L-4,-1 Z"/><path class="rune" id="rune-sun" d="M14,0 L18,-4 L22,0 L18,4 Z"/>',
+    chest: '<rect x="-12" y="-3" width="24" height="13" rx="2"/><path d="M-12,-3 A12,8 0 0 1 12,-3"/><path d="M0,-3 V10"/><circle cx="0" cy="2" r="2"/>',
+  };
+
+  const RUNE_IDS = { '月': 'rune-moon', '星': 'rune-star', '日': 'rune-sun' };
+
+  /* ---------------- 建场景 ---------------- */
+  function pointAt(frac) {
+    return trail.getPointAtLength(trailLen * Math.min(1, Math.max(0, frac)));
+  }
+
+  function buildLandmarks() {
+    LANDMARKS.forEach((lm) => {
+      const pt = pointAt(lm.frac);
+      const g = document.createElementNS(SVG_NS, 'g');
+      g.setAttribute('class', 'landmark');
+      g.dataset.id = lm.id;
+      g.setAttribute('transform', `translate(${pt.x.toFixed(1)} ${pt.y.toFixed(1)})`);
+      g.innerHTML = `
+        <g class="icon" transform="translate(0 -16)">${ICONS[lm.icon]}</g>
+        <text y="30" text-anchor="middle">${lm.label}</text>
+      `;
+      landmarksLayer.append(g);
+    });
+  }
+
+  function buildStars() {
+    for (let i = 0; i < 80; i++) {
+      const c = document.createElementNS(SVG_NS, 'circle');
+      c.setAttribute('cx', (Math.random() * 820).toFixed(1));
+      c.setAttribute('cy', (Math.random() * 430).toFixed(1));
+      c.setAttribute('r', (Math.random() * 1.1 + 0.25).toFixed(2));
+      c.setAttribute('fill', '#cfe4ff');
+      c.setAttribute('opacity', (Math.random() * 0.45 + 0.08).toFixed(2));
+      starsLayer.append(c);
+    }
+  }
+
+  function addTorch(frac, dx, dy) {
+    const p = pointAt(frac);
+    const g = document.createElementNS(SVG_NS, 'g');
+    g.setAttribute('class', 'torch-svg');
+    g.setAttribute('transform', `translate(${(p.x + dx).toFixed(1)} ${(p.y + dy).toFixed(1)})`);
+    g.innerHTML = `
+      <rect x="-2" y="0" width="4" height="15" rx="2" fill="#4a3014"/>
+      <path class="flame" d="M0,3 C-6,-4 -2,-11 0,-17 C3,-9 7,-4 0,3 Z" fill="url(#flameGrad)"/>
+    `;
+    torchesLayer.append(g);
+  }
+
+  function buildSteps() {
+    stepsEl.innerHTML = '';
+    STEPS.forEach((s, i) => {
+      const el = document.createElement('div');
+      el.className = 'step';
+      el.dataset.step = s.id;
+      el.innerHTML = `
+        <div class="row">
+          <span class="dot">${i + 1}</span>
+          <span class="name">${s.name}</span>
+          <span class="sub">等待</span>
+        </div>
+        ${s.substeps
+          ? `<div class="substeps">${s.substeps
+              .map((x) => `<span class="substep" data-substep="${x.id}">${x.name}</span>`)
+              .join('')}</div>`
+          : ''}
+      `;
+      stepsEl.append(el);
+    });
+  }
+
+  buildLandmarks();
+  buildStars();
+  buildSteps();
+  addTorch(0.5, -22, 6);
+  addTorch(0.9, 20, 4);
+
+  /* ---------------- UI ---------------- */
+  function stamp() {
+    const ms = Math.max(0, performance.now() - state.startTime);
+    return (ms / 1000).toFixed(1).padStart(4, '0') + 's';
+  }
+
+  function log(text, tone = 'info') {
+    const line = document.createElement('div');
+    line.className = `log-line ${tone}`;
+    const t = document.createElement('span');
+    t.className = 't';
+    t.textContent = stamp();
+    const m = document.createElement('span');
+    m.className = 'msg';
+    m.textContent = text;
+    line.append(t, m);
+    logEl.append(line);
+    logEl.scrollTop = logEl.scrollHeight;
+    while (logEl.children.length > 200) logEl.firstElementChild.remove();
+  }
+
+  function setStatus(text, tone) {
+    statusEl.textContent = text;
+    statusEl.dataset.tone = tone;
+  }
+
+  function setLocation(text) {
+    locationEl.textContent = text;
+  }
+
+  function setStep(id, status) {
+    const el = stepsEl.querySelector(`.step[data-step="${id}"]`);
+    if (!el) return;
+    el.classList.remove('active', 'done', 'fail');
+    if (status) el.classList.add(status);
+    const index = STEPS.findIndex((s) => s.id === id) + 1;
+    el.querySelector('.dot').textContent =
+      status === 'done' ? '✓' : status === 'fail' ? '!' : String(index);
+    el.querySelector('.sub').textContent =
+      status === 'active' ? '进行中' : status === 'done' ? '完成' : status === 'fail' ? '失败' : '等待';
+    const done = stepsEl.querySelectorAll('.step.done').length;
+    stepCountEl.textContent = `${done} / ${STEPS.length}`;
+  }
+
+  function setSubstep(id, status) {
+    const el = stepsEl.querySelector(`.substep[data-substep="${id}"]`);
+    if (!el) return;
+    el.classList.remove('active', 'done');
+    if (status) el.classList.add(status);
+  }
+
+  function setProgress(p) {
+    state.progress = Math.max(0, Math.min(1, p));
+    trailProgress.style.strokeDashoffset = String(trailLen * (1 - state.progress));
+    const pt = pointAt(state.progress);
+    traveler.setAttribute('transform', `translate(${pt.x.toFixed(2)} ${pt.y.toFixed(2)})`);
+    progressBar.style.width = (state.progress * 100).toFixed(1) + '%';
+  }
+
+  function lightLandmark(id) {
+    const el = landmarksLayer.querySelector(`.landmark[data-id="${id}"]`);
+    if (el) el.classList.add('lit');
+  }
+
+  function lightRune(name) {
+    const id = RUNE_IDS[name];
+    if (!id) return;
+    const el = document.getElementById(id);
+    if (el) el.classList.add('lit');
+  }
+
+  function shake() {
+    stage.classList.remove('shake');
+    void stage.offsetWidth;
+    stage.classList.add('shake');
+    setTimeout(() => stage.classList.remove('shake'), 600);
+  }
+
+  function flash(kind) {
+    const cls = kind === 'danger' ? 'flash-danger' : 'flash-gold';
+    stage.classList.remove('flash-danger', 'flash-gold');
+    void stage.offsetWidth;
+    stage.classList.add(cls);
+    setTimeout(() => stage.classList.remove(cls), 750);
+  }
+
+  /* ---------------- 异步工具 ---------------- */
+  function pause(ms) {
+    const token = state.run;
+    return new Promise((resolve, reject) => {
+      setTimeout(() => {
+        if (token !== state.run) reject(new AbortRun());
+        else resolve();
+      }, Math.max(8, ms / state.speed));
+    });
+  }
+
+  function animate(duration, onUpdate) {
+    const token = state.run;
+    return new Promise((resolve, reject) => {
+      const started = performance.now();
+      const total = Math.max(16, duration / state.speed);
+      function frame(now) {
+        if (token !== state.run) { reject(new AbortRun()); return; }
+        const t = Math.min(1, (now - started) / total);
+        const eased = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+        onUpdate(eased);
+        if (t < 1) requestAnimationFrame(frame);
+        else resolve();
+      }
+      requestAnimationFrame(frame);
+    });
+  }
+
+  async function travel(to, ms) {
+    const from = state.progress;
+    if (Math.abs(to - from) < 0.001) { setProgress(to); return; }
+    await animate(ms, (t) => setProgress(from + (to - from) * t));
+  }
+
+  async function withRetry(task, attempts = 3, onRetry) {
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        return await task(attempt);
+      } catch (err) {
+        if (err instanceof AbortRun || attempt === attempts) throw err;
+        await onRetry?.(attempt, err);
+      }
+    }
+  }
+
+  /* ---------------- 寻宝 API ---------------- */
+  class TreasureMap {
+    static async getInitialClue() {
+      await pause(900);
+      return { text: '月圆之夜，湖心之眼；第三块基石，会为你让路。' };
+    }
+
+    static async decodeAncientScript(clue) {
+      await pause(1100);
+      if (!clue || !clue.text) throw new StoryError('没有线索可以解码。');
+      return {
+        location: '月影湖心的沉没神庙',
+        riddle: '什么东西越洗越脏？',
+      };
+    }
+
+    static async lightBrazier() {
+      await pause(1500);
+      return { name: '青铜火盆', message: '东侧火盆亮起，火光沿着铜槽蔓延。' };
+    }
+
+    static async readStarChart() {
+      await pause(2100);
+      return { name: '星象盘', message: '星象盘咬合，指针停在天顶的猎户座。' };
+    }
+
+    static async sneakPastGuards() {
+      await pause(2700);
+      return { name: '守卫长廊', message: '巡逻队转向西侧，你贴着墙根穿过长廊。' };
+    }
+
+    static async openTreasureBox() {
+      await pause(1000);
+      return {
+        line1: '箱子里没有金币，也没有宝石。',
+        line2: '只有一枚星辉罗盘、半张写着「天空之城」的地图，',
+        line3: '和一张字条：「真正的宝藏，是愿意继续出发的人。」',
+      };
+    }
+  }
+
+  /* ---------------- 选择路径 ---------------- */
+  function abortPendingChoice() {
+    const fn = state.pendingChoice;
+    state.pendingChoice = null;
+    if (fn) fn();
+  }
+
+  function choosePath() {
+    return new Promise((resolve, reject) => {
+      if (state.pendingChoice) { reject(new AbortRun()); return; }
+
+      const buttons = $$('.choice-options button', choiceEl);
+      let finished = false;
+      let raf = 0;
+      let timeout = 0;
+
+      const cleanup = () => {
+        buttons.forEach((b) => { b.onclick = null; });
+        cancelAnimationFrame(raf);
+        clearTimeout(timeout);
+        if (state.pendingChoice === abort) state.pendingChoice = null;
+        choiceEl.hidden = true;
+        choiceEl.classList.remove('show');
+      };
+
+      const finish = (route, auto) => {
+        if (finished) return;
+        finished = true;
+        cleanup();
+        if (auto) log('八秒沙漏流尽。你不再犹豫，推开了正门。', 'info');
+        resolve(route);
+      };
+
+      const abort = () => {
+        if (finished) return;
+        finished = true;
+        cleanup();
+        reject(new AbortRun());
+      };
+      state.pendingChoice = abort;
+
+      buttons.forEach((b) => {
+        b.onclick = () => finish(b.dataset.choice, false);
+      });
+
+      choiceEl.hidden = false;
+      choiceEl.classList.add('show');
+      choiceBar.style.animation = 'none';
+      void choiceBar.offsetWidth;
+      choiceBar.style.animation = 'choiceDrain 8s linear forwards';
+
+      const started = performance.now();
+      const tick = (now) => {
+        if (finished) return;
+        if (now - started >= 8000) { finish('front', true); return; }
+        raf = requestAnimationFrame(tick);
+      };
+      raf = requestAnimationFrame(tick);
+      timeout = setTimeout(() => finish('front', true), 8120);
+    });
+  }
+
+  /* ---------------- 计时 ---------------- */
+  function startTimer() {
+    stopTimer();
+    timerEl.textContent = '0.0s';
+    state.timer = setInterval(() => {
+      timerEl.textContent = ((performance.now() - state.startTime) / 1000).toFixed(1) + 's';
+    }, 100);
+  }
+
+  function stopTimer() {
+    if (state.timer) {
+      clearInterval(state.timer);
+      state.timer = null;
+    }
+  }
+
+  /* ---------------- 结局 ---------------- */
+  function spawnSparks() {
+    sparksEl.innerHTML = '';
+    for (let i = 0; i < 28; i++) {
+      const s = document.createElement('i');
+      const angle = Math.random() * Math.PI * 2;
+      const dist = 80 + Math.random() * 210;
+      s.style.setProperty('--tx', (Math.cos(angle) * dist).toFixed(0) + 'px');
+      s.style.setProperty('--ty', (Math.sin(angle) * dist).toFixed(0) + 'px');
+      s.style.animationDelay = (Math.random() * 0.25).toFixed(2) + 's';
+      sparksEl.append(s);
+    }
+  }
+
+  function showReveal(seconds) {
+    finalTimeEl.textContent = seconds.toFixed(1) + 's';
+    revealEl.hidden = false;
+    revealEl.classList.add('open');
+    spawnSparks();
+    const rect = stage.getBoundingClientRect();
+    burst(rect.width / 2, rect.height * 0.42, 80);
+  }
+
+  /* ---------------- 重置 ---------------- */
+  function resetUI() {
+    abortPendingChoice();
+    stopTimer();
+
+    state.progress = 0;
+    state.startTime = performance.now();
+    state.running = false;
+
+    timerEl.textContent = '0.0s';
+    setStatus('待启程', 'idle');
+    setLocation('—');
+    logEl.innerHTML = '';
+    stepCountEl.textContent = `0 / ${STEPS.length}`;
+
+    $$('.step', stepsEl).forEach((el) => {
+      el.classList.remove('active', 'done', 'fail');
+      const index = STEPS.findIndex((s) => s.id === el.dataset.step) + 1;
+      el.querySelector('.dot').textContent = String(index);
+      el.querySelector('.sub').textContent = '等待';
+    });
+    $$('.substep', stepsEl).forEach((el) => el.classList.remove('active', 'done'));
+
+    choiceEl.hidden = true;
+    choiceEl.classList.remove('show');
+    revealEl.hidden = true;
+    revealEl.classList.remove('open');
+    sparksEl.innerHTML = '';
+    $$('.landmark', landmarksLayer).forEach((el) => el.classList.remove('lit'));
+    $$('.rune', landmarksLayer).forEach((el) => el.classList.remove('lit'));
+
+    setProgress(0);
+    startBtn.disabled = false;
+    startBtn.textContent = '开始探险';
+  }
+
+  /* ---------------- 主剧情 ---------------- */
+  async function runAdventure() {
+    if (state.running) return;
+
+    state.run += 1;
+    const token = state.run;
+
+    resetUI();
+    state.running = true;
+    state.startTime = performance.now();
+    startTimer();
+    setStatus('探险中', 'live');
+    startBtn.disabled = true;
+    startBtn.textContent = '探险中…';
+
+    try {
+      /* 第一幕 */
+      setStep('letter', 'active');
+      setLocation('老城 · 雨夜阁楼');
+      lightLandmark('letter');
+      log('雨点敲打窗棂。一封没有署名的信，从门缝下滑了进来。', 'story');
+      await pause(850);
+      log('火漆上压着一枚太阳纹章——三百年前「观星会」的标记。', 'special');
+      log('信纸上只有一行字：「月圆之夜，去图书馆。别相信影子。」', 'special');
+      await travel(0.17, 1300);
+      setStep('letter', 'done');
+
+      /* 第二幕 */
+      setStep('library', 'active');
+      setLocation('古图书馆 · 第三排书架');
+      lightLandmark('library');
+      log('第三排书架后，你摸到一只铜匣，里面是一卷被虫蛀过的羊皮地图。', 'story');
+      const clue = await TreasureMap.getInitialClue();
+      log(`地图上残存的墨迹拼出一句话：「${clue.text}」`, 'special');
+      await pause(450);
+      log('你把地图铺在观星台上。星轨与墨线重叠，浮出一个地名……', 'info');
+      const decoded = await TreasureMap.decodeAncientScript(clue);
+      log(`解码成功：${decoded.location}。`, 'success');
+      log(`羊皮卷背面还有一行小字：「${decoded.riddle}」`, 'special');
+      setStep('library', 'done');
+      await travel(0.37, 1200);
+
+      /* 第三幕 */
+      setStep('lake', 'active');
+      setLocation('月影湖 · 无风之夜');
+      lightLandmark('lake');
+      log('湖面没有风，却泛起一圈圈波纹。摆渡人从雾里撑出一条小船。', 'story');
+      log('「答对我的谜，才渡你过去。」他说，「什么东西越洗越脏？」', 'special');
+      await pause(1300);
+      log('你看向黑得发亮的湖水，答：「水。」', 'success');
+      await pause(500);
+      log('摆渡人笑了。竹篙一点，小船滑向湖心。', 'success');
+      setStep('lake', 'done');
+      await travel(0.55, 1300);
+
+      /* 第四幕 */
+      setStep('gate', 'active');
+      setLocation('月影神庙 · 山门');
+      lightLandmark('gate');
+      log('雾散开。一座没有名字的神庙立在湖心，山门上刻着一只闭着的眼睛。', 'story');
+      log('门侧有两处入口：正门的日晷，和水下的暗道。', 'special');
+
+      const route = await choosePath();
+      if (route === 'front') {
+        log('你拨动日晷。晷针指向「申时」，石门缓缓升起，尘土簌簌落下。', 'success');
+        await pause(900);
+        log('门后是一条笔直的石阶。你数到第一百级时，听见了水声。', 'story');
+      } else {
+        log('你拨开水草，钻进地下水道。冷水没过脚踝，远处有铁甲摩擦的声音。', 'warn');
+        await withRetry(
+          async (attempt) => {
+            await pause(850);
+            if (attempt < 3 && Math.random() < 0.62) {
+              throw new StoryError('守卫的火把光扫过拐角。');
+            }
+            return true;
+          },
+          3,
+          async (attempt) => {
+            shake();
+            flash('danger');
+            log(`第 ${attempt} 次潜入被发现，你退回水道入口，屏住呼吸。`, 'danger');
+            await pause(700);
+          }
+        );
+        log('最后一次，你贴着潮湿的石壁，从守卫背后溜了过去。', 'success');
+      }
+      setStep('gate', 'done');
+      await travel(0.72, 1100);
+
+      /* 第五幕：Promise.all */
+      setStep('trials', 'active');
+      setLocation('神庙中庭 · 三重试炼');
+      lightLandmark('trials');
+      setSubstep('brazier', 'active');
+      setSubstep('chart', 'active');
+      setSubstep('guard', 'active');
+      log('中庭的地面裂成三块。火盆、星盘、守卫长廊——三座试炼必须同时完成。', 'special');
+      log('你深吸一口气，把三个机关同时启动。', 'info');
+
+      const trials = await Promise.all([
+        TreasureMap.lightBrazier().then((r) => {
+          setSubstep('brazier', 'done');
+          log(r.message, 'success');
+          return r.name;
+        }),
+        TreasureMap.readStarChart().then((r) => {
+          setSubstep('chart', 'done');
+          log(r.message, 'success');
+          return r.name;
+        }),
+        TreasureMap.sneakPastGuards().then((r) => {
+          setSubstep('guard', 'done');
+          log(r.message, 'success');
+          return r.name;
+        }),
+      ]);
+      log(`三重试炼同时完成：${trials.join(' · ')}。`, 'success');
+      setStep('trials', 'done');
+      await travel(0.86, 900);
+
+      /* 第六幕：Promise.race */
+      setStep('sand', 'active');
+      setLocation('流沙之门');
+      lightLandmark('sand');
+      log('试炼完成的瞬间，头顶沙漏翻转，石门开始下沉。你只有一次机会。', 'warn');
+
+      const escape = (async () => {
+        await pause(2400);
+        log('你侧身滚过正在闭合的门缝，石屑擦过肩头。', 'success');
+        return 'escape';
+      })();
+      const closed = (async () => {
+        await pause(3200);
+        return 'closed';
+      })().catch(() => 'aborted');
+
+      const outcome = await Promise.race([escape, closed]);
+      if (outcome !== 'escape') throw new StoryError('石门合拢，你被挡在门外。');
+      log('身后传来石门落地的闷响。你赶上了。', 'warn');
+      setStep('sand', 'done');
+      await travel(0.94, 800);
+
+      /* 第七幕 */
+      setStep('runes', 'active');
+      setLocation('宝藏殿 · 符文门');
+      lightLandmark('runes');
+      log('门前嵌着三枚符文：月、星、日。石壁刻着：「夜之后是光，光之前是星。」', 'special');
+      for (const rune of ['月', '星', '日']) {
+        await pause(700);
+        lightRune(rune);
+        log(`符文「${rune}」亮起。`, 'info');
+      }
+      await pause(500);
+      log('三枚符文连成一条光路，门后传来齿轮松开的声音。', 'success');
+      setStep('runes', 'done');
+      await travel(1, 1000);
+
+      /* 第八幕 */
+      setStep('chest', 'active');
+      setLocation('宝藏殿 · 月光穹顶');
+      lightLandmark('chest');
+      log('穹顶裂开一道缝，月光落在石台的箱子上。箱盖没有锁。', 'story');
+      await pause(900);
+      const treasure = await TreasureMap.openTreasureBox();
+      log(treasure.line1, 'warn');
+      await pause(700);
+      log(treasure.line2, 'special');
+      log(treasure.line3, 'special');
+      await pause(700);
+      log('你合上箱盖。下一段旅程，已经在罗盘里发亮。', 'special');
+
+      const seconds = (performance.now() - state.startTime) / 1000;
+      stopTimer();
+      timerEl.textContent = seconds.toFixed(1) + 's';
+      setStep('chest', 'done');
+      setStatus('已归来', 'done');
+      showReveal(seconds);
+      flash('gold');
+    } catch (err) {
+      if (err instanceof AbortRun) return;
+      console.error(err);
+      log(`探险中断：${err.message}`, 'danger');
+      setStatus('中断', 'fail');
+    } finally {
+      if (token === state.run) {
+        state.running = false;
+        stopTimer();
+        startBtn.disabled = false;
+        startBtn.textContent = '再次出发';
+      }
+    }
+  }
+
+  /* ---------------- 重新开始 ---------------- */
+  function restart() {
+    state.run += 1;
+    state.running = false;
+    abortPendingChoice();
+    resetUI();
+    runAdventure();
+  }
+
+  /* ---------------- 粒子 ---------------- */
+  const canvas = $('#dust');
+  const ctx = canvas.getContext('2d');
+  let W = 0;
+  let H = 0;
+  let DPR = 1;
+  let motes = [];
+  let sparks = [];
+
+  function seedMotes() {
+    const count = state.reduced ? 14 : Math.min(70, Math.round((W * H) / 20000));
+    motes = Array.from({ length: count }, () => ({
+      x: Math.random() * W,
+      y: Math.random() * H,
+      r: Math.random() * 1.5 + 0.4,
+      vy: -(Math.random() * 0.16 + 0.04),
+      vx: (Math.random() - 0.5) * 0.06,
+      a: Math.random() * 0.4 + 0.08,
+      tw: Math.random() * Math.PI * 2,
+    }));
+  }
+
+  function resizeCanvas() {
+    const rect = stage.getBoundingClientRect();
+    DPR = Math.min(2, window.devicePixelRatio || 1);
+    W = Math.max(1, rect.width);
+    H = Math.max(1, rect.height);
+    canvas.width = Math.round(W * DPR);
+    canvas.height = Math.round(H * DPR);
+    canvas.style.width = W + 'px';
+    canvas.style.height = H + 'px';
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    seedMotes();
+  }
+
+  function burst(x, y, count = 60) {
+    if (state.reduced) return;
+    for (let i = 0; i < count; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = Math.random() * 4.5 + 1.2;
+      sparks.push({
+        x,
+        y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed - 1.2,
+        r: Math.random() * 2 + 0.8,
+        life: Math.random() * 0.7 + 0.7,
+        color: Math.random() < 0.72 ? 'rgba(255,214,120,.95)' : 'rgba(255,250,230,.95)',
+      });
+    }
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    const t = performance.now() / 1000;
+
+    for (const m of motes) {
+      m.x += m.vx;
+      m.y += m.vy;
+      if (m.y < -8) { m.y = H + 8; m.x = Math.random() * W; }
+      if (m.x < -8) m.x = W + 8;
+      if (m.x > W + 8) m.x = -8;
+      const alpha = m.a * (0.6 + 0.4 * Math.sin(t * 1.3 + m.tw));
+      ctx.beginPath();
+      ctx.arc(m.x, m.y, m.r, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(244,205,130,${alpha.toFixed(3)})`;
+      ctx.fill();
+    }
+
+    for (let i = sparks.length - 1; i >= 0; i--) {
+      const s = sparks[i];
+      s.vy += 0.045;
+      s.x += s.vx;
+      s.y += s.vy;
+      s.life -= 1 / 70;
+      if (s.life <= 0) { sparks.splice(i, 1); continue; }
+      ctx.globalAlpha = Math.min(1, s.life);
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+      ctx.fillStyle = s.color;
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    requestAnimationFrame(draw);
+  }
+
+  /* ---------------- 绑定 ---------------- */
+  startBtn.addEventListener('click', () => {
+    if (!state.running) runAdventure();
+  });
+
+  restartBtn.addEventListener('click', restart);
+
+  speedBtn.addEventListener('click', () => {
+    state.speed = state.speed === 1 ? 2 : state.speed === 2 ? 4 : 1;
+    speedBtn.textContent = `速度 ×${state.speed}`;
+  });
+
+  $('#againBtn').addEventListener('click', restart);
+
+  $('#closeReveal').addEventListener('click', () => {
+    revealEl.hidden = true;
+    revealEl.classList.remove('open');
+  });
+
+  $('#chestWrap').addEventListener('click', () => {
+    spawnSparks();
+    const r = $('#chestWrap').getBoundingClientRect();
+    const sr = stage.getBoundingClientRect();
+    burst(r.left - sr.left + r.width / 2, r.top - sr.top + r.height / 2, 60);
+  });
+
+  window.addEventListener('resize', resizeCanvas);
+  if ('ResizeObserver' in window) {
+    new ResizeObserver(resizeCanvas).observe(stage);
+  }
+
+  /* ---------------- 启动 ---------------- */
+  resizeCanvas();
+  setProgress(0);
+  draw();
+
+  window.addEventListener('load', () => {
+    setTimeout(() => {
+      if (!state.running) runAdventure();
+    }, 1100);
+  });
+})();
+</script>
+</body>
+</html>
