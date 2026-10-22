@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>月影神庙 · 异步寻宝记</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23050a10'/%3E%3Cpath d='M8 16h16v9H8z' fill='%23f4c96b'/%3E%3Cpath d='M8 16a8 8 0 0 1 16 0' fill='none' stroke='%23f4c96b' stroke-width='2'/%3E%3Ccircle cx='16' cy='20' r='1.6' fill='%234a2d0d'/%3E%3C/svg%3E">
-<meta name="description" content="用 async / await 驱动的异步寻宝动画：八幕冒险、并行试炼、竞速与重试。">
+<meta name="description" content="用 async / await 驱动、由玩家推进的八幕寻宝动画：答题、选路、启动试炼、连点冲门、符文解谜与亲手开箱。">
 <style>
   :root {
     --bg: #050a10;
@@ -461,6 +461,8 @@
   }
   button:disabled { cursor: not-allowed; opacity: 0.55; }
   button:not(:disabled):hover { transform: translateY(-1px); }
+  button:focus-visible { outline: 2px solid rgba(99, 230, 212, 0.7); outline-offset: 2px; }
+  .modal-card:focus, .choice-card:focus { outline: none; }
   .primary {
     color: #1c1305;
     font-weight: 700;
@@ -538,22 +540,254 @@
   }
   .choice-options b { display: block; font-size: 13px; font-weight: 600; letter-spacing: 0.03em; }
   .choice-options small { display: block; margin-top: 5px; font-size: 11px; color: var(--muted); }
-  .choice-timer {
-    height: 3px;
-    margin-top: 16px;
-    border-radius: 99px;
-    background: rgba(255, 255, 255, 0.08);
-    overflow: hidden;
+  .choice-note { margin: 12px 0 0; font-size: 10.5px; color: #5f7381; text-align: right; }
+
+  /* ---------- interactive modal ---------- */
+  .modal {
+    position: absolute;
+    inset: 0;
+    z-index: 7;
+    display: grid;
+    place-items: center;
+    padding: 18px;
+    background: rgba(4, 9, 14, 0.62);
+    backdrop-filter: blur(5px);
+    -webkit-backdrop-filter: blur(5px);
+    animation: fadeIn 0.35s both;
   }
-  .choice-timer i {
+  .modal-card {
+    width: min(94%, 560px);
+    max-height: 94%;
+    overflow-y: auto;
+    padding: 22px;
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    background: linear-gradient(160deg, rgba(13, 28, 38, 0.98), rgba(8, 17, 24, 0.98));
+    box-shadow: 0 30px 80px rgba(0, 0, 0, 0.62);
+    animation: riseIn 0.4s both;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(244, 201, 107, 0.25) transparent;
+  }
+  .modal-card h3 {
+    margin: 0 0 6px;
+    font-family: "Noto Serif SC", "Songti SC", serif;
+    font-size: 21px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    color: var(--parchment);
+  }
+  .modal-text { margin: 0; font-size: 12.5px; line-height: 1.65; color: var(--muted); }
+  .answers { display: grid; gap: 9px; margin-top: 16px; }
+  .answers button {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    padding: 12px 14px;
+    text-align: left;
+    color: var(--parchment);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.035);
+  }
+  .answers button:hover { border-color: var(--gold); background: rgba(244, 201, 107, 0.08); }
+  .answers .glyph {
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+    width: 30px;
+    height: 30px;
+    border: 1px solid rgba(244, 201, 107, 0.3);
+    border-radius: 9px;
+    color: var(--gold);
+    font-family: "Noto Serif SC", "Songti SC", serif;
+    font-size: 15px;
+  }
+  .answers b { display: block; font-size: 13px; font-weight: 600; }
+  .answers small { display: block; margin-top: 3px; font-size: 11px; color: var(--muted); }
+  .answers button.wrong {
+    border-color: rgba(255, 111, 111, 0.65);
+    background: rgba(255, 111, 111, 0.12);
+    animation: shake 0.45s;
+  }
+  .answers button.right {
+    border-color: rgba(126, 231, 135, 0.65);
+    background: rgba(126, 231, 135, 0.13);
+  }
+  .answers button.right:disabled { opacity: 1; }
+  .feedback { margin: 12px 0 0; min-height: 17px; font-size: 11.5px; line-height: 1.55; color: var(--muted); }
+  .feedback.bad { color: var(--red); }
+  .feedback.good { color: var(--green); }
+
+  .trial-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; margin-top: 16px; }
+  .trial-card {
+    padding: 15px 8px 12px;
+    text-align: center;
+    color: var(--parchment);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 13px;
+    background: rgba(255, 255, 255, 0.03);
+  }
+  .trial-card:hover:not(:disabled) { border-color: var(--gold); background: rgba(244, 201, 107, 0.08); }
+  .trial-card .glyph {
     display: block;
+    margin-bottom: 7px;
+    font-family: "Noto Serif SC", "Songti SC", serif;
+    font-size: 23px;
+    color: var(--gold);
+  }
+  .trial-card b { display: block; font-size: 12px; font-weight: 600; }
+  .trial-card small { display: block; margin-top: 4px; font-size: 10px; line-height: 1.4; color: var(--muted); }
+  .trial-card.on {
+    border-color: rgba(126, 231, 135, 0.6);
+    background: rgba(126, 231, 135, 0.1);
+    box-shadow: inset 0 0 22px rgba(126, 231, 135, 0.06);
+  }
+  .trial-card.on .glyph { color: var(--green); }
+  .trial-card.on:disabled { opacity: 1; cursor: default; }
+
+  .dash-stage { margin-top: 16px; }
+  .dash-count { display: flex; justify-content: space-between; font-size: 11px; letter-spacing: 0.05em; color: var(--muted); }
+  .dash-count b { color: var(--gold); font-variant-numeric: tabular-nums; }
+  .dash-bar { height: 11px; margin-top: 7px; border-radius: 99px; background: rgba(255, 255, 255, 0.07); overflow: hidden; }
+  .dash-bar i {
+    display: block;
+    width: 0;
     height: 100%;
-    width: 100%;
     border-radius: 99px;
     background: linear-gradient(90deg, var(--cyan), var(--gold));
+    transition: width 0.08s linear;
+  }
+  .dash-btn {
+    display: block;
+    width: 100%;
+    margin-top: 13px;
+    padding: 19px;
+    font-size: 18px;
+    font-weight: 800;
+    letter-spacing: 0.22em;
+    color: #1c1305;
+    background: linear-gradient(135deg, #ffe6a1, #e8a84a);
+    border-radius: 14px;
+    box-shadow: 0 10px 30px rgba(232, 168, 74, 0.28);
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: manipulation;
+  }
+  .dash-btn:active { transform: scale(0.985); }
+  .dash-close { height: 4px; margin-top: 13px; border-radius: 99px; background: rgba(255, 255, 255, 0.08); overflow: hidden; }
+  .dash-close i {
+    display: block;
+    width: 100%;
+    height: 100%;
+    border-radius: 99px;
+    background: linear-gradient(90deg, #ff9d5c, var(--red));
     transform-origin: left;
   }
-  .choice-note { margin: 8px 0 0; font-size: 10.5px; color: #5f7381; text-align: right; }
+  .dash-note { display: flex; justify-content: space-between; margin: 7px 0 0; font-size: 10.5px; color: var(--muted); }
+  .dash-note b { color: var(--red); font-variant-numeric: tabular-nums; }
+
+  .rune-clue {
+    margin: 15px 0 0;
+    text-align: center;
+    font-family: "Noto Serif SC", "Songti SC", serif;
+    font-size: 13px;
+    letter-spacing: 0.12em;
+    color: var(--gold);
+  }
+  .rune-row { display: flex; justify-content: center; gap: 13px; margin: 16px 0 4px; }
+  .rune-btn {
+    display: grid;
+    place-items: center;
+    width: 68px;
+    height: 68px;
+    font-family: "Noto Serif SC", "Songti SC", serif;
+    font-size: 28px;
+    color: rgba(244, 201, 107, 0.55);
+    border: 1px solid rgba(244, 201, 107, 0.22);
+    border-radius: 15px;
+    background: rgba(244, 201, 107, 0.04);
+  }
+  .rune-btn:hover { border-color: var(--gold); color: var(--gold); }
+  .rune-btn.lit {
+    color: #1c1305;
+    background: linear-gradient(135deg, #fff1c9, #f4c96b);
+    box-shadow: 0 0 24px rgba(244, 201, 107, 0.55);
+  }
+  .rune-btn.bad { border-color: var(--red); color: var(--red); animation: shake 0.45s; }
+  .rune-sequence { display: flex; justify-content: center; gap: 7px; margin-top: 12px; }
+  .rune-sequence span {
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 50%;
+    font-size: 11px;
+    color: #5f7381;
+  }
+  .rune-sequence span.on { color: var(--gold); border-color: var(--gold); background: rgba(244, 201, 107, 0.1); }
+
+  .chest-open {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    margin-top: 10px;
+    padding: 13px;
+    color: var(--parchment);
+    border: 1px solid rgba(244, 201, 107, 0.26);
+    border-radius: 15px;
+    background: rgba(244, 201, 107, 0.05);
+  }
+  .chest-open:not(:disabled):hover { border-color: var(--gold); background: rgba(244, 201, 107, 0.1); }
+  .chest-open svg { width: 104px; filter: drop-shadow(0 0 18px rgba(244, 201, 107, 0.32)); animation: float 3.6s ease-in-out infinite; }
+  .chest-open span { font-size: 12.5px; letter-spacing: 0.14em; }
+
+  /* ---------- intro ---------- */
+  .intro {
+    position: absolute;
+    inset: 0;
+    z-index: 9;
+    display: grid;
+    place-items: center;
+    padding: 18px;
+    background: radial-gradient(circle at 50% 45%, rgba(9, 27, 35, 0.78), rgba(3, 8, 12, 0.95));
+    backdrop-filter: blur(3px);
+    -webkit-backdrop-filter: blur(3px);
+    animation: fadeIn 0.5s both;
+  }
+  .intro-card {
+    width: min(92%, 500px);
+    padding: 26px 24px 20px;
+    text-align: center;
+    border: 1px solid var(--line);
+    border-radius: 22px;
+    background: linear-gradient(165deg, rgba(14, 31, 42, 0.96), rgba(7, 16, 23, 0.97));
+    box-shadow: 0 30px 90px rgba(0, 0, 0, 0.62);
+    animation: riseIn 0.6s 0.1s both;
+  }
+  .intro-card h2 {
+    margin: 4px 0 8px;
+    font-family: "Noto Serif SC", "Songti SC", serif;
+    font-size: clamp(27px, 4vw, 38px);
+    letter-spacing: 0.16em;
+    background: linear-gradient(100deg, #fff3cc, #f4c96b 55%, #e3a84b);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .intro-lead { margin: 0 auto; max-width: 340px; font-size: 12.5px; line-height: 1.8; color: var(--muted); }
+  .intro-steps { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin: 15px 0 18px; }
+  .intro-steps span {
+    padding: 4px 10px;
+    border: 1px solid rgba(244, 201, 107, 0.18);
+    border-radius: 99px;
+    font-size: 10.5px;
+    color: #9aacba;
+  }
+  .intro-card .primary { width: 100%; padding: 13px; font-size: 14px; letter-spacing: 0.16em; }
+  .intro-note { margin: 9px 0 0; font-size: 10px; letter-spacing: 0.04em; color: #5f7381; }
 
   /* ---------- reveal ---------- */
   .reveal {
@@ -706,11 +940,6 @@
     60% { transform: translateX(4px); }
     75% { transform: translateX(-2px); }
   }
-  @keyframes choiceDrain {
-    from { transform: scaleX(1); }
-    to { transform: scaleX(0); }
-  }
-
   /* ---------- responsive ---------- */
   @media (max-width: 980px) {
     body { overflow: auto; }
@@ -736,6 +965,19 @@
       -webkit-backdrop-filter: blur(8px);
     }
     .reveal-inner { margin: auto; }
+    .modal, .intro {
+      position: fixed;
+      z-index: 20;
+      overflow-y: auto;
+      border-radius: 0;
+    }
+    .modal { padding: 20px 14px; background: rgba(4, 9, 14, 0.88); }
+    .intro { background: radial-gradient(circle at 50% 40%, rgba(12, 32, 41, 0.98), rgba(3, 8, 12, 0.995)); }
+    .modal-card, .intro-card { margin: auto; max-height: none; }
+    .intro-card { padding: 24px 18px 18px; }
+    .trial-grid { gap: 6px; }
+    .trial-card { padding: 12px 5px 10px; }
+    .trial-card .glyph { font-size: 20px; }
   }
   @media (max-height: 760px) and (min-width: 981px) {
     .scene-caption { bottom: 10px; }
@@ -752,7 +994,7 @@
     <div class="brand">
       <p class="eyebrow">A Story Told in Async / Await</p>
       <h1>月影神庙<span>·</span>异步寻宝记</h1>
-      <p class="subtitle">八幕冒险，全部由 Promise 驱动</p>
+      <p class="subtitle">八幕冒险，由你推动，也由 Promise 驱动</p>
     </div>
     <div class="hud">
       <div class="pill"><span>用时</span><strong id="timer">0.0s</strong></div>
@@ -835,7 +1077,7 @@
       </svg>
 
       <div class="choice" id="choice" hidden>
-        <div class="choice-card">
+        <div class="choice-card" tabindex="-1">
           <p class="kicker">第四幕 · 神庙之门</p>
           <h3>两条路，都能到达真相</h3>
           <p class="choice-desc">正门稳妥但更慢；暗道更快，却可能惊动守卫。这一次，由你来选。</p>
@@ -849,8 +1091,17 @@
               <small>捷径 · 可能触发重试</small>
             </button>
           </div>
-          <div class="choice-timer"><i id="choiceBar"></i></div>
-          <p class="choice-note">8 秒后自动选择正门</p>
+          <p class="choice-note">时间在这里停住了——选一条路，故事才会继续。</p>
+        </div>
+      </div>
+
+      <div class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle" hidden>
+        <div class="modal-card" tabindex="-1">
+          <p class="kicker" id="modalKicker"></p>
+          <h3 id="modalTitle"></h3>
+          <p class="modal-text" id="modalDesc"></p>
+          <div id="modalBody"></div>
+          <div id="modalActions"></div>
         </div>
       </div>
 
@@ -895,6 +1146,23 @@
           </div>
         </div>
       </div>
+
+      <div class="intro" id="intro">
+        <div class="intro-card">
+          <p class="kicker">A Story You Play</p>
+          <h2>月影神庙</h2>
+          <p class="intro-lead">八幕异步冒险。这一次，由你推门、答题、选路、启动机关，也由你亲手打开宝箱。</p>
+          <div class="intro-steps">
+            <span>湖谜答题</span>
+            <span>选择路线</span>
+            <span>启动试炼</span>
+            <span>连点冲门</span>
+            <span>符文解谜</span>
+          </div>
+          <button class="primary" id="enterBtn" type="button">推门而入</button>
+          <p class="intro-note">点击开始后，故事才会启程。</p>
+        </div>
+      </div>
     </section>
 
     <aside class="panel">
@@ -910,7 +1178,7 @@
     <button class="primary" id="startBtn" type="button">开始探险</button>
     <button class="ghost" id="restartBtn" type="button">重新开始</button>
     <button class="ghost" id="speedBtn" type="button">速度 ×1</button>
-    <span class="hint">第 4 幕可以替探险者选路 · 点击宝箱有惊喜</span>
+    <span class="hint">答题 · 选路 · 启动机关 · 连点冲门 · 符文解谜 · 亲手开箱</span>
   </footer>
 </div>
 
@@ -937,6 +1205,7 @@
     progress: 0,
     timer: null,
     pendingChoice: null,
+    pendingModal: null,
     reduced: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
   };
 
@@ -956,8 +1225,14 @@
   const locationEl = $('#location');
   const stepCountEl = $('#step-count');
   const choiceEl = $('#choice');
-  const choiceBar = $('#choiceBar');
   const revealEl = $('#reveal');
+  const introEl = $('#intro');
+  const modalEl = $('#modal');
+  const modalKicker = $('#modalKicker');
+  const modalTitle = $('#modalTitle');
+  const modalDesc = $('#modalDesc');
+  const modalBody = $('#modalBody');
+  const modalActions = $('#modalActions');
   const sparksEl = $('#sparks');
   const finalTimeEl = $('#finalTime');
   const startBtn = $('#startBtn');
@@ -1154,6 +1429,13 @@
     if (el) el.classList.add('lit');
   }
 
+  function unlightRune(name) {
+    const id = RUNE_IDS[name];
+    if (!id) return;
+    const el = document.getElementById(id);
+    if (el) el.classList.remove('lit');
+  }
+
   function shake() {
     stage.classList.remove('shake');
     void stage.offsetWidth;
@@ -1214,6 +1496,334 @@
     }
   }
 
+  /* ---------------- 互动层：等待玩家输入 ---------------- */
+  function closeModal() {
+    modalEl.hidden = true;
+    modalBody.innerHTML = '';
+    modalActions.innerHTML = '';
+  }
+
+  function openModal({ kicker = '', title = '', desc = '', body = '' }) {
+    modalKicker.textContent = kicker;
+    modalTitle.textContent = title;
+    modalDesc.textContent = desc;
+    modalDesc.hidden = !desc;
+    modalBody.innerHTML = body;
+    modalActions.innerHTML = '';
+    modalEl.hidden = false;
+    setStatus('等待你的选择', 'live');
+    const card = modalEl.querySelector('.modal-card');
+    if (card) {
+      setTimeout(() => {
+        if (!modalEl.hidden) card.focus({ preventScroll: true });
+      }, 60);
+    }
+  }
+
+  /**
+   * 把一个“玩家输入”包成 Promise：
+   * finish(value) 兑现，abort() 以 AbortRun 拒绝。
+   * 重新开始时会调用 abortPendingModal()，旧剧情不会再往下走。
+   */
+  function modalInput(render) {
+    return new Promise((resolve, reject) => {
+      if (state.pendingModal) { reject(new AbortRun()); return; }
+
+      let done = false;
+      const finish = (value) => {
+        if (done) return;
+        done = true;
+        state.pendingModal = null;
+        closeModal();
+        if (state.running) setStatus('探险中', 'live');
+        resolve(value);
+      };
+      const abort = () => {
+        if (done) return;
+        done = true;
+        state.pendingModal = null;
+        closeModal();
+        reject(new AbortRun());
+      };
+
+      state.pendingModal = abort;
+      render(finish, abort);
+    });
+  }
+
+  function abortPendingModal() {
+    const fn = state.pendingModal;
+    state.pendingModal = null;
+    if (fn) fn();
+  }
+
+  function askRiddle() {
+    return modalInput((finish) => {
+      openModal({
+        kicker: '第三幕 · 月影湖',
+        title: '摆渡人的谜题',
+        desc: '「答对我的谜，才渡你过去。」摆渡人把竹篙横在船头，「什么东西越洗越脏？」',
+        body: `
+          <div class="answers" id="riddleAnswers">
+            <button type="button" data-answer="well">
+              <span class="glyph">井</span>
+              <span><b>井水</b><small>越打，越清。</small></span>
+            </button>
+            <button type="button" data-answer="water">
+              <span class="glyph">水</span>
+              <span><b>水</b><small>越洗，越浑。</small></span>
+            </button>
+            <button type="button" data-answer="mirror">
+              <span class="glyph">镜</span>
+              <span><b>镜子</b><small>越擦，越亮。</small></span>
+            </button>
+          </div>
+          <p class="feedback" id="riddleMsg">选一个答案。答错可以再试。</p>
+        `,
+      });
+
+      const msg = $('#riddleMsg', modalEl);
+      const buttons = $$('#riddleAnswers button', modalEl);
+
+      buttons.forEach((btn) => {
+        btn.onclick = () => {
+          if (btn.dataset.answer === 'water') {
+            buttons.forEach((b) => { b.disabled = true; });
+            btn.classList.add('right');
+            msg.className = 'feedback good';
+            msg.textContent = '摆渡人笑了：「答对了。水越洗，越浑。」';
+            setTimeout(() => finish(true), 650);
+          } else {
+            btn.classList.add('wrong');
+            msg.className = 'feedback bad';
+            msg.textContent = '摆渡人摇头：「再想想。湖水每天都在洗东西。」';
+            shake();
+            setTimeout(() => btn.classList.remove('wrong'), 520);
+          }
+        };
+      });
+    });
+  }
+
+  function startTrialsByHand() {
+    const trials = [
+      { id: 'brazier', name: '青铜火盆', glyph: '火', hint: '点亮东侧火光' },
+      { id: 'chart', name: '星象盘', glyph: '星', hint: '校准天顶星轨' },
+      { id: 'guard', name: '守卫长廊', glyph: '影', hint: '趁巡逻转向' },
+    ];
+
+    return modalInput((finish) => {
+      openModal({
+        kicker: '第五幕 · 三重试炼',
+        title: '亲手启动三座机关',
+        desc: '三座试炼必须同时完成。依次按下三个机关，把它们全部唤醒。',
+        body: `
+          <div class="trial-grid">
+            ${trials.map((t) => `
+              <button type="button" class="trial-card" data-trial="${t.id}">
+                <span class="glyph">${t.glyph}</span>
+                <b>${t.name}</b>
+                <small>${t.hint}</small>
+              </button>
+            `).join('')}
+          </div>
+          <p class="feedback" id="trialMsg">已启动 0 / 3 · 三个都按下后，Promise.all 才会同时开始。</p>
+        `,
+      });
+
+      const msg = $('#trialMsg', modalEl);
+      let count = 0;
+
+      $$('.trial-card', modalEl).forEach((btn) => {
+        btn.onclick = () => {
+          if (btn.disabled) return;
+          btn.disabled = true;
+          btn.classList.add('on');
+          count += 1;
+          setSubstep(btn.dataset.trial, 'active');
+          log(`你按下「${btn.querySelector('b').textContent}」的机关。`, 'info');
+          msg.textContent = `已启动 ${count} / 3 · 还差 ${3 - count} 个。`;
+          if (count === 3) {
+            msg.className = 'feedback good';
+            msg.textContent = '三座机关同时咬合，试炼开始运转。';
+            setTimeout(() => finish(true), 520);
+          }
+        };
+      });
+    });
+  }
+
+  function dashThroughGate() {
+    return modalInput((finish) => {
+      openModal({
+        kicker: '第六幕 · 流沙之门',
+        title: '在石门合拢前冲过去',
+        desc: '快速点击下方按钮。红色条是石门的下沉进度——它不会等你。',
+        body: `
+          <div class="dash-stage">
+            <div class="dash-count"><span>冲刺进度</span><b id="dashCount">0 / 8</b></div>
+            <div class="dash-bar"><i id="dashFill"></i></div>
+            <button class="dash-btn" id="dashBtn" type="button">冲！</button>
+            <div class="dash-close"><i id="dashClose"></i></div>
+            <p class="dash-note"><span>石门关闭倒计时</span><b id="dashTime">5.0s</b></p>
+          </div>
+        `,
+      });
+
+      const need = 8;
+      const windowMs = 5000;
+      const token = state.run;
+      const btn = $('#dashBtn', modalEl);
+      const fill = $('#dashFill', modalEl);
+      const closeBar = $('#dashClose', modalEl);
+      const countEl = $('#dashCount', modalEl);
+      const timeEl = $('#dashTime', modalEl);
+      const started = performance.now();
+      let clicks = 0;
+      let done = false;
+      let raf = 0;
+
+      const tick = (now) => {
+        if (done || token !== state.run) return;
+        const elapsed = now - started;
+        const left = Math.max(0, 1 - elapsed / windowMs);
+        closeBar.style.transform = `scaleX(${left.toFixed(3)})`;
+        timeEl.textContent = (Math.max(0, windowMs - elapsed) / 1000).toFixed(1) + 's';
+        if (elapsed >= windowMs) {
+          done = true;
+          finish('closed');
+          return;
+        }
+        raf = requestAnimationFrame(tick);
+      };
+      raf = requestAnimationFrame(tick);
+
+      btn.onclick = () => {
+        if (done) return;
+        clicks += 1;
+        countEl.textContent = `${Math.min(clicks, need)} / ${need}`;
+        fill.style.width = `${Math.min(100, (clicks / need) * 100)}%`;
+        if (clicks >= need) {
+          done = true;
+          cancelAnimationFrame(raf);
+          btn.disabled = true;
+          btn.textContent = '冲过去了！';
+          closeBar.style.transform = 'scaleX(0)';
+          setTimeout(() => finish('escape'), 520);
+        }
+      };
+    });
+  }
+
+  function solveRuneLock() {
+    const order = ['月', '星', '日'];
+    return modalInput((finish) => {
+      openModal({
+        kicker: '第七幕 · 符文之锁',
+        title: '按顺序点亮三枚符文',
+        desc: '石壁刻着：「夜之后是光，光之前是星。」按石刻的顺序点击符文。',
+        body: `
+          <p class="rune-clue">夜之后是光，光之前是星</p>
+          <div class="rune-row">
+            <button class="rune-btn" data-rune="月" type="button">月</button>
+            <button class="rune-btn" data-rune="星" type="button">星</button>
+            <button class="rune-btn" data-rune="日" type="button">日</button>
+          </div>
+          <div class="rune-sequence" id="runeSeq">
+            <span>1</span><span>2</span><span>3</span>
+          </div>
+          <p class="feedback" id="runeMsg">从「夜」开始。点错会全部熄灭。</p>
+        `,
+      });
+
+      const token = state.run;
+      const msg = $('#runeMsg', modalEl);
+      const slots = $$('#runeSeq span', modalEl);
+      const buttons = $$('.rune-btn', modalEl);
+      let index = 0;
+      let attempts = 0;
+      let locked = false;
+
+      const resetRunes = () => {
+        buttons.forEach((b) => b.classList.remove('lit', 'bad'));
+        slots.forEach((s, i) => {
+          s.classList.remove('on');
+          s.textContent = String(i + 1);
+        });
+        order.forEach(unlightRune);
+        index = 0;
+        locked = false;
+      };
+
+      buttons.forEach((btn) => {
+        btn.onclick = () => {
+          if (locked) return;
+          const rune = btn.dataset.rune;
+          if (rune !== order[index]) {
+            attempts += 1;
+            locked = true;
+            btn.classList.add('bad');
+            shake();
+            flash('danger');
+            msg.className = 'feedback bad';
+            const hint = attempts >= 2 ? '夜是「月」，光是「日」。' : '再想想那句石刻。';
+            msg.textContent = `顺序不对，符文全部暗了下去。${hint}`;
+            setTimeout(() => {
+              if (token !== state.run) return;
+              resetRunes();
+            }, 520);
+            return;
+          }
+
+          btn.classList.add('lit');
+          slots[index].classList.add('on');
+          slots[index].textContent = rune;
+          lightRune(rune);
+          index += 1;
+
+          if (index === order.length) {
+            locked = true;
+            msg.className = 'feedback good';
+            msg.textContent = '月 → 星 → 日。三枚符文连成一条光路。';
+            setTimeout(() => finish({ attempts }), 650);
+          } else {
+            msg.className = 'feedback';
+            msg.textContent = `「${rune}」亮了。下一枚……`;
+          }
+        };
+      });
+    });
+  }
+
+  function openChestByHand() {
+    return modalInput((finish) => {
+      openModal({
+        kicker: '终幕 · 月光穹顶',
+        title: '宝箱就在眼前',
+        desc: '箱盖没有锁。这一次，由你亲手掀开它。',
+        body: `
+          <button class="chest-open" id="chestOpenBtn" type="button">
+            <svg viewBox="0 0 120 96" aria-hidden="true">
+              <path d="M20 44 A40 26 0 0 1 100 44 L100 54 L20 54 Z" fill="#a9752f" stroke="#f4c96b" stroke-width="2"/>
+              <rect x="20" y="54" width="80" height="34" rx="6" fill="#6b4213" stroke="#f4c96b" stroke-width="2"/>
+              <path d="M20 44 A40 26 0 0 1 100 44" fill="none" stroke="#ffd98a" stroke-width="1.4" opacity=".7"/>
+              <rect x="52" y="58" width="16" height="22" rx="3" fill="#f4c96b"/>
+              <circle cx="60" cy="68" r="3" fill="#4a2d0d"/>
+            </svg>
+            <span>掀开箱盖</span>
+          </button>
+        `,
+      });
+
+      const btn = $('#chestOpenBtn', modalEl);
+      btn.onclick = () => {
+        btn.disabled = true;
+        btn.querySelector('span').textContent = '箱盖开了……';
+        setTimeout(() => finish(true), 620);
+      };
+    });
+  }
+
   /* ---------------- 寻宝 API ---------------- */
   class TreasureMap {
     static async getInitialClue() {
@@ -1268,23 +1878,19 @@
 
       const buttons = $$('.choice-options button', choiceEl);
       let finished = false;
-      let raf = 0;
-      let timeout = 0;
 
       const cleanup = () => {
         buttons.forEach((b) => { b.onclick = null; });
-        cancelAnimationFrame(raf);
-        clearTimeout(timeout);
         if (state.pendingChoice === abort) state.pendingChoice = null;
         choiceEl.hidden = true;
         choiceEl.classList.remove('show');
       };
 
-      const finish = (route, auto) => {
+      const finish = (route) => {
         if (finished) return;
         finished = true;
         cleanup();
-        if (auto) log('八秒沙漏流尽。你不再犹豫，推开了正门。', 'info');
+        if (state.running) setStatus('探险中', 'live');
         resolve(route);
       };
 
@@ -1297,23 +1903,16 @@
       state.pendingChoice = abort;
 
       buttons.forEach((b) => {
-        b.onclick = () => finish(b.dataset.choice, false);
+        b.onclick = () => finish(b.dataset.choice);
       });
 
       choiceEl.hidden = false;
       choiceEl.classList.add('show');
-      choiceBar.style.animation = 'none';
-      void choiceBar.offsetWidth;
-      choiceBar.style.animation = 'choiceDrain 8s linear forwards';
-
-      const started = performance.now();
-      const tick = (now) => {
-        if (finished) return;
-        if (now - started >= 8000) { finish('front', true); return; }
-        raf = requestAnimationFrame(tick);
-      };
-      raf = requestAnimationFrame(tick);
-      timeout = setTimeout(() => finish('front', true), 8120);
+      setStatus('等待你的选择', 'live');
+      const card = $('.choice-card', choiceEl);
+      setTimeout(() => {
+        if (!choiceEl.hidden) card.focus({ preventScroll: true });
+      }, 60);
     });
   }
 
@@ -1359,6 +1958,8 @@
   /* ---------------- 重置 ---------------- */
   function resetUI() {
     abortPendingChoice();
+    abortPendingModal();
+    closeModal();
     stopTimer();
 
     state.progress = 0;
@@ -1383,6 +1984,7 @@
     choiceEl.classList.remove('show');
     revealEl.hidden = true;
     revealEl.classList.remove('open');
+    introEl.hidden = true;
     sparksEl.innerHTML = '';
     $$('.landmark', landmarksLayer).forEach((el) => el.classList.remove('lit'));
     $$('.rune', landmarksLayer).forEach((el) => el.classList.remove('lit'));
@@ -1440,9 +2042,10 @@
       lightLandmark('lake');
       log('湖面没有风，却泛起一圈圈波纹。摆渡人从雾里撑出一条小船。', 'story');
       log('「答对我的谜，才渡你过去。」他说，「什么东西越洗越脏？」', 'special');
-      await pause(1300);
+      log('点击一个答案，替探险者回答。答错可以再试。', 'info');
+      await askRiddle();
       log('你看向黑得发亮的湖水，答：「水。」', 'success');
-      await pause(500);
+      await pause(450);
       log('摆渡人笑了。竹篙一点，小船滑向湖心。', 'success');
       setStep('lake', 'done');
       await travel(0.55, 1300);
@@ -1486,11 +2089,10 @@
       setStep('trials', 'active');
       setLocation('神庙中庭 · 三重试炼');
       lightLandmark('trials');
-      setSubstep('brazier', 'active');
-      setSubstep('chart', 'active');
-      setSubstep('guard', 'active');
       log('中庭的地面裂成三块。火盆、星盘、守卫长廊——三座试炼必须同时完成。', 'special');
-      log('你深吸一口气，把三个机关同时启动。', 'info');
+      log('依次按下三个机关，把它们全部唤醒。', 'info');
+      await startTrialsByHand();
+      log('三座机关同时咬合，三个 Promise 一起开始运转……', 'info');
 
       const trials = await Promise.all([
         TreasureMap.lightBrazier().then((r) => {
@@ -1517,21 +2119,21 @@
       setStep('sand', 'active');
       setLocation('流沙之门');
       lightLandmark('sand');
-      log('试炼完成的瞬间，头顶沙漏翻转，石门开始下沉。你只有一次机会。', 'warn');
+      log('试炼完成的瞬间，头顶沙漏翻转，石门开始下沉。', 'warn');
+      log('快速点击「冲！」，在五秒内把冲刺进度填满。', 'info');
 
-      const escape = (async () => {
-        await pause(2400);
-        log('你侧身滚过正在闭合的门缝，石屑擦过肩头。', 'success');
-        return 'escape';
-      })();
-      const closed = (async () => {
-        await pause(3200);
-        return 'closed';
-      })().catch(() => 'aborted');
-
-      const outcome = await Promise.race([escape, closed]);
-      if (outcome !== 'escape') throw new StoryError('石门合拢，你被挡在门外。');
-      log('身后传来石门落地的闷响。你赶上了。', 'warn');
+      let outcome = 'closed';
+      while (outcome !== 'escape') {
+        outcome = await dashThroughGate();
+        if (outcome !== 'escape') {
+          shake();
+          flash('danger');
+          log('石门合拢了。气浪把你推回门外——但齿轮又转动起来，石门升起一线。', 'danger');
+          await pause(450);
+          log('再来一次。', 'warn');
+        }
+      }
+      log('你侧身滚过正在闭合的门缝，石屑擦过肩头。身后传来石门落地的闷响。', 'success');
       setStep('sand', 'done');
       await travel(0.94, 800);
 
@@ -1540,13 +2142,16 @@
       setLocation('宝藏殿 · 符文门');
       lightLandmark('runes');
       log('门前嵌着三枚符文：月、星、日。石壁刻着：「夜之后是光，光之前是星。」', 'special');
-      for (const rune of ['月', '星', '日']) {
-        await pause(700);
-        lightRune(rune);
-        log(`符文「${rune}」亮起。`, 'info');
-      }
-      await pause(500);
-      log('三枚符文连成一条光路，门后传来齿轮松开的声音。', 'success');
+      log('按顺序点击三枚符文。点错会全部熄灭，得从头再来。', 'info');
+      const runeResult = await solveRuneLock();
+      log(
+        runeResult.attempts
+          ? `试了 ${runeResult.attempts} 次，三枚符文终于连成一条光路。`
+          : '三枚符文依次亮起，连成一条光路。',
+        'success'
+      );
+      await pause(350);
+      log('门后传来齿轮松开的声音。', 'success');
       setStep('runes', 'done');
       await travel(1, 1000);
 
@@ -1555,7 +2160,8 @@
       setLocation('宝藏殿 · 月光穹顶');
       lightLandmark('chest');
       log('穹顶裂开一道缝，月光落在石台的箱子上。箱盖没有锁。', 'story');
-      await pause(900);
+      log('点击宝箱，亲手掀开箱盖。', 'info');
+      await openChestByHand();
       const treasure = await TreasureMap.openTreasureBox();
       log(treasure.line1, 'warn');
       await pause(700);
@@ -1587,12 +2193,26 @@
   }
 
   /* ---------------- 重新开始 ---------------- */
-  function restart() {
+  function stopRun() {
     state.run += 1;
     state.running = false;
     abortPendingChoice();
-    resetUI();
+    abortPendingModal();
+  }
+
+  function restart() {
+    stopRun();
     runAdventure();
+  }
+
+  function backToStart() {
+    stopRun();
+    resetUI();
+    setStatus('待启程', 'idle');
+    setLocation('—');
+    introEl.hidden = false;
+    startBtn.disabled = false;
+    startBtn.textContent = '开始探险';
   }
 
   /* ---------------- 粒子 ---------------- */
@@ -1683,11 +2303,14 @@
   }
 
   /* ---------------- 绑定 ---------------- */
-  startBtn.addEventListener('click', () => {
+  function beginAdventure() {
+    introEl.hidden = true;
     if (!state.running) runAdventure();
-  });
+  }
 
-  restartBtn.addEventListener('click', restart);
+  startBtn.addEventListener('click', beginAdventure);
+  $('#enterBtn').addEventListener('click', beginAdventure);
+  restartBtn.addEventListener('click', backToStart);
 
   speedBtn.addEventListener('click', () => {
     state.speed = state.speed === 1 ? 2 : state.speed === 2 ? 4 : 1;
@@ -1717,12 +2340,6 @@
   resizeCanvas();
   setProgress(0);
   draw();
-
-  window.addEventListener('load', () => {
-    setTimeout(() => {
-      if (!state.running) runAdventure();
-    }, 1100);
-  });
 })();
 </script>
 </body>
